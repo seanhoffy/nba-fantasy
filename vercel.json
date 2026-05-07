@@ -1,5 +1,11 @@
 {
-  "rewrites": [
-    { "source": "/api/scores", "destination": "/api/scores" }
+  "version": 2,
+  "builds": [
+    { "src": "api/scores.py", "use": "@vercel/python" },
+    { "src": "index.html", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/scores", "dest": "/api/scores.py" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }

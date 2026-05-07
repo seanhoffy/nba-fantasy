@@ -1,9 +1,8 @@
-from flask import Flask, jsonify
+from http.server import BaseHTTPRequestHandler
+import json
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-
-app = Flask(__name__)
 
 ESPN_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -93,7 +92,6 @@ def fetch_player_gamelog(player_name):
     espn_id = PLAYER_ESPN_IDS.get(player_name)
     if not espn_id:
         return {"name": player_name, "nba_team": "", "pts": 0, "reb": 0, "ast": 0, "gp": 0, "pra": 0}
-
     try:
         resp = requests.get(
             f"https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/{espn_id}/gamelog",
@@ -102,7 +100,7 @@ def fetch_player_gamelog(player_name):
             timeout=10,
         )
         data = resp.json()
-    except Exception as e:
+    except Exception:
         return {"name": player_name, "nba_team": "", "pts": 0, "reb": 0, "ast": 0, "gp": 0, "pra": 0}
 
     events_dict = data.get("events", {})
@@ -116,12 +114,10 @@ def fetch_player_gamelog(player_name):
             is_r1 = "Quarterfinal" in cat_name
             is_r2 = "Semifinal" in cat_name
             is_r3_plus = "Conference Finals" in cat_name or "NBA Finals" in cat_name
-
             if not (is_r1 or is_r2 or is_r3_plus):
                 continue
             if is_r1:
                 continue
-
             for ev in cat.get("events", []):
                 event_id = ev.get("eventId", "")
                 event_note = events_dict.get(event_id, {}).get("eventNote", "")
@@ -156,7 +152,27 @@ def get_scores():
     return teams
 
 
-@app.route("/api/scores")
-def scores():
-    data = get_scores()
-    return jsonify({"data": data, "updated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")})
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            data = get_scores()
+            body = json.dumps({
+                "data": data,
+                "updated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as e:
+            body = json.dumps({"error": str(e)}).encode()
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
