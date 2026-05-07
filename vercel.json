@@ -1,7 +1,5 @@
 {
-  "functions": {
-    "api/scores.py": {
-      "maxDuration": 30
-    }
-  }
+  "rewrites": [
+    { "source": "/api/scores", "destination": "/api/scores" }
+  ]
 }

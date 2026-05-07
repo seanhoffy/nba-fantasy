@@ -1,15 +1,15 @@
-from http.server import BaseHTTPRequestHandler
-import json
+from flask import Flask, jsonify
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+
+app = Flask(__name__)
 
 ESPN_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "application/json",
 }
 
-# Verified ESPN player IDs for all 54 draft picks
 PLAYER_ESPN_IDS = {
     "Shai Gilgeous-Alexander": "4278073",
     "LeBron James": "1966",
@@ -79,7 +79,6 @@ ROSTERS = {
     "Trent":   ["Donovan Mitchell", "Jalen Williams", "Rudy Gobert", "Joel Embiid", "Austin Reaves", "Luguentz Dort"],
 }
 
-# ESPN stats array indices: MIN(0) FG(1) FG%(2) 3PT(3) 3P%(4) FT(5) FT%(6) REB(7) AST(8) BLK(9) STL(10) PF(11) TO(12) PTS(13)
 REB_IDX, AST_IDX, PTS_IDX = 7, 8, 13
 
 
@@ -104,38 +103,30 @@ def fetch_player_gamelog(player_name):
         )
         data = resp.json()
     except Exception as e:
-        return {"name": player_name, "nba_team": "", "pts": 0, "reb": 0, "ast": 0, "gp": 0, "pra": 0, "error": str(e)}
+        return {"name": player_name, "nba_team": "", "pts": 0, "reb": 0, "ast": 0, "gp": 0, "pra": 0}
 
     events_dict = data.get("events", {})
     season_types = data.get("seasonTypes", [])
-
     nba_team = season_types[0].get("displayTeam", "") if season_types else ""
     pts = reb = ast = gp = 0
 
     for st in season_types:
         for cat in st.get("categories", []):
             cat_name = cat.get("displayName", "")
-
             is_r1 = "Quarterfinal" in cat_name
             is_r2 = "Semifinal" in cat_name
             is_r3_plus = "Conference Finals" in cat_name or "NBA Finals" in cat_name
 
-            # Only count actual playoff rounds; skip regular season, preseason, All-Star, NBA Cup, etc.
             if not (is_r1 or is_r2 or is_r3_plus):
                 continue
-
-            # Skip Round 1 entirely
             if is_r1:
                 continue
 
             for ev in cat.get("events", []):
                 event_id = ev.get("eventId", "")
                 event_note = events_dict.get(event_id, {}).get("eventNote", "")
-
-                # Skip Game 1 of any Semifinals series (pre-draft games)
                 if is_r2 and "Game 1" in event_note:
                     continue
-
                 stats = ev.get("stats", [])
                 if len(stats) > PTS_IDX:
                     pts += safe_int(stats[PTS_IDX])
@@ -143,20 +134,11 @@ def fetch_player_gamelog(player_name):
                     ast += safe_int(stats[AST_IDX])
                     gp += 1
 
-    return {
-        "name": player_name,
-        "nba_team": nba_team,
-        "pts": pts,
-        "reb": reb,
-        "ast": ast,
-        "gp": gp,
-        "pra": pts + reb + ast,
-    }
+    return {"name": player_name, "nba_team": nba_team, "pts": pts, "reb": reb, "ast": ast, "gp": gp, "pra": pts + reb + ast}
 
 
 def get_scores():
     all_players = [p for roster in ROSTERS.values() for p in roster]
-
     player_stats = {}
     with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {executor.submit(fetch_player_gamelog, name): name for name in all_players}
@@ -168,34 +150,13 @@ def get_scores():
     for team_name, roster in ROSTERS.items():
         players = [player_stats.get(p, {"name": p, "nba_team": "", "pts": 0, "reb": 0, "ast": 0, "gp": 0, "pra": 0}) for p in roster]
         players.sort(key=lambda x: x["pra"], reverse=True)
-        total = sum(p["pra"] for p in players)
-        teams.append({"team": team_name, "total": total, "players": players})
+        teams.append({"team": team_name, "total": sum(p["pra"] for p in players), "players": players})
 
     teams.sort(key=lambda x: x["total"], reverse=True)
     return teams
 
 
-class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        try:
-            scores = get_scores()
-            body = json.dumps({
-                "data": scores,
-                "updated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        except Exception as e:
-            body = json.dumps({"error": str(e)}).encode()
-            self.send_response(500)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-    def log_message(self, format, *args):
-        pass
+@app.route("/api/scores")
+def scores():
+    data = get_scores()
+    return jsonify({"data": data, "updated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")})
